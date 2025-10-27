@@ -54,13 +54,6 @@ jobs:
           pytest tests/ --cov=. --cov-report=xml --cov-report=html
         continue-on-error: false
       
-      # 步骤 6: 上传测试覆盖率报告
-      - name: 上传覆盖率报告
-        uses: actions/upload-artifact@v3
-        with:
-          name: coverage-report
-          path: htmlcov/
-          retention-days: 7
   
   # ============================================
   # 任务 2: 构建 Docker 镜像（仅本地构建）
