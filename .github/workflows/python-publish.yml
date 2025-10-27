@@ -1,71 +1,98 @@
-# This workflow will upload a Python Package to PyPI when a release is created
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
-
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
+# Flask 应用 CI/CD 工作流
+# 文件位置: .github/workflows/deploy.yml
 
 name: 部署流水线
 
+# 触发条件
 on:
+  # 当代码推送到 main 分支时触发
   push:
-    branches:
-      - main
-    tags:
-      - '*'
+    branches: [main]
+
+# 环境变量配置
+env:
+  PYTHON_VERSION: '3.12'  # Python 版本
+  FLASK_APP: test_app.py       # Flask 应用入口文件
 
 jobs:
-  release-build:
+  # ============================================
+  # 任务 1: 代码测试和质量检查
+  # ============================================
+  test:
+    name: 测试和代码质量检查
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: 拉取代码
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      # 步骤 1: 检出代码
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
+      
+      # 步骤 2: 设置 Python 环境
+      - name: 设置 Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.x"
-
-      - name: Build release distributions
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      # 步骤 3: 安装依赖
+      - name: 安装依赖包
         run: |
-          # NOTE: put your own distribution build steps here.
-          python -m pip install build
-          python -m build
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      # 步骤 4: 代码风格检查
+      - name: Flake8 代码风格检查
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        continue-on-error: true
+      
+      # 步骤 5: 运行单元测试
+      - name: 运行 Pytest 单元测试
+        run: |
+          pytest tests/ --cov=. --cov-report=xml --cov-report=html
+        continue-on-error: false
+      
+      # 步骤 6: 上传测试覆盖率报告
+      - name: 上传覆盖率报告
+        uses: actions/upload-artifact@v3
         with:
-          name: release-dists
-          path: dist/
-
-  pypi-publish:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 7
+  
+  # ============================================
+  # 任务 2: 构建 Docker 镜像（仅本地构建）
+  # ============================================
+  build:
+    name: 构建 Docker 镜像
     runs-on: ubuntu-latest
-    needs:
-      - release-build
-    permissions:
-      # IMPORTANT: this permission is mandatory for trusted publishing
-      id-token: write
-
-    # Dedicated environments with protections for publishing are strongly recommended.
-    # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
-    environment:
-      name: pypi
-      # OPTIONAL: uncomment and update to include your PyPI project URL in the deployment status:
-      # url: https://pypi.org/p/YOURPROJECT
-      #
-      # ALTERNATIVE: if your GitHub Release name is the PyPI project version string
-      # ALTERNATIVE: exactly, uncomment the following line instead:
-      # url: https://pypi.org/project/YOURPROJECT/${{ github.event.release.name }}
-
+    needs: test  # 依赖测试任务完成
+    
     steps:
-      - name: Retrieve release distributions
-        uses: actions/download-artifact@v4
+      # 步骤 1: 检出代码
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      # 步骤 2: 设置 Docker Buildx
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      # 步骤 3: 构建 Docker 镜像（不推送）
+      - name: 构建 Docker 镜像
+        uses: docker/build-push-action@v5
         with:
-          name: release-dists
-          path: dist/
-
-      - name: Publish release distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
+          context: .
+          file: ./Dockerfile
+          push: false  # 不推送镜像
+          tags: flask-app:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true  # 加载镜像到本地 Docker
+      
+      # 步骤 4: 验证镜像构建成功
+      - name: 验证镜像
+        run: |
+          echo "✅ Docker 镜像构建成功"
+          docker images | grep flask-app
